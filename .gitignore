@@ -6,7 +6,7 @@
 .build/
 
 # Layer-card render (regenerate from make_card.py); keep if you'd rather version it
-colemak_layer_card.pdf
+lets_tango_layer_card.pdf
 original_alu40_zmk_card.pdf
 
 # Python (layer-card generator)

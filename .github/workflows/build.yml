@@ -85,7 +85,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: layer-card
-          path: colemak_layer_card.pdf
+          path: lets_tango_layer_card.pdf
           if-no-files-found: error
 
   release:

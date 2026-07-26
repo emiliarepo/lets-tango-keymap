@@ -4,7 +4,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.colors import HexColor, white
 
 W, H = landscape(A4)  # 841.89 x 595.28
-OUT = os.environ.get("CARD_OUT", "colemak_layer_card.pdf")
+OUT = os.environ.get("CARD_OUT", "lets_tango_layer_card.pdf")
 KEYMAP_SRC = os.environ.get("KEYMAP_SRC", "keymap.c")
 c = canvas.Canvas(OUT, pagesize=(W, H))
 
