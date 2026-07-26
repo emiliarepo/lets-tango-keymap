@@ -31,7 +31,7 @@ jobs:
           qmk config user.qmk_home="$QMK_HOME"
           KM="$QMK_HOME/keyboards/vitamins_included/keymaps/colemak"
           mkdir -p "$KM"
-          cp keymap.c config.h rules.mk "$KM/"
+          cp *.c *.h rules.mk "$KM/"
           qmk compile -kb vitamins_included/rev2 -km colemak
 
       - name: Upload firmware

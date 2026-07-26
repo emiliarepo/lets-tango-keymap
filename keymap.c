@@ -5,35 +5,18 @@
 //                                     12 WS2812 underglow LEDs = 6 per half)
 //   Layout: LAYOUT_ortho_4x12  (4x12 split ortholinear)
 //
-// Layers:
-//   0 = COLEMAK (base)   1 = QWERTY (base)   2 = LOWER   3 = RAISE   4 = ADJUST
-// Two base layers; switch between them persistently from ADJUST (PDF keys). Bases sit
-// below the momentary layers so RAISE/LOWER/ADJUST overlay whichever base is active.
+// Two base layers (COLEMAK / QWERTY); switch between them persistently from ADJUST (PDF keys).
+// Bases sit below the momentary layers so RAISE/LOWER/ADJUST overlay whichever base is active.
 //
 // ADJUST is reached like in ZMK: hold one thumb layer key (RAISE or LOWER) and press the
 // other thumb key, which is MO(ADJUST) on that layer.
 //
-// Per-layer RGB underglow: each layer has its own hue family (Colemak purple / QWERTY green /
-// LOWER orange / RAISE cyan / ADJUST red) that slowly SPINS around the 12-LED ring. The master
-// computes the animation and syncs hue + phase to the slave over a split RPC so both halves
-// stay locked together. Flash BOTH halves whenever this changes.
+// Layer enums live in layers.h. The underglow lives in underglow.c -- this file contains no
+// RGB code, it just forwards the three hooks the animation needs.
 
 #include QMK_KEYBOARD_H
-#include "transactions.h"
-
-enum layers {
-    _COLEMAK = 0,  // base (purple underglow)
-    _QWERTY,       // 1  base (green underglow) - toggle on Adjust
-    _LOWER,        // 2
-    _RAISE,        // 3
-    _ADJUST        // 4  (control)
-};
-
-// Tap-dance keys: hold = momentary layer (like MO), double-tap = lock that layer (double-tap again to unlock).
-enum tap_dances {
-    TD_LOWER,
-    TD_RAISE
-};
+#include "layers.h"
+#include "underglow.h"
 
 const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 
@@ -163,92 +146,23 @@ tap_dance_action_t tap_dance_actions[] = {
 };
 
 /* ------------------------------------------------------------------ *
- *  Per-layer SPINNING underglow
- *
- *  Each layer picks a base hue; a narrow gradient (+/- SPIN_SPAN/2 around
- *  that hue, so the colour family is preserved) is swept around the ring
- *  by a slowly advancing phase. The master runs the clock and sends
- *  {hue, phase, val} to the slave every frame so both halves stay in step.
+ *  QMK hooks -> underglow module
  * ------------------------------------------------------------------ */
 
-#define SPIN_LEDS     RGBLIGHT_LED_COUNT  // 12 (6 per half)
-#define SPIN_INTERVAL 40                  // ms per frame (~25 fps)
-#define SPIN_SPEED    1                   // phase units per frame -> ~10 s per revolution
-#define SPIN_SPAN     34                  // hue spread across the strip (keeps the family)
-
-typedef struct __attribute__((packed)) {
-    uint8_t hue;
-    uint8_t phase;
-    uint8_t val;
-} spin_sync_t;
-
-static uint8_t  spin_phase = 0;
-static uint16_t spin_timer = 0;
-
-// Physical hold state of the LOWER/RAISE tap-dance keys, used so the underglow reflects
-// a held layer immediately (tap dance defers the actual layer-on until the dance resolves).
-static bool td_lower_down = false;
-static bool td_raise_down = false;
-
-static uint8_t hue_for_layer(uint8_t layer) {
-    switch (layer) {
-        case _QWERTY: return 85;   // green
-        case _LOWER:  return 28;   // orange
-        case _RAISE:  return 130;  // cyan
-        case _ADJUST: return 0;    // red
-        default:      return 197;  // _COLEMAK, purple
-    }
-}
-
-// Paint the whole ring from a base hue + rotation phase.
-static void spin_render(uint8_t base_hue, uint8_t phase, uint8_t val) {
-    for (uint8_t i = 0; i < SPIN_LEDS; i++) {
-        uint8_t pos = (uint8_t)(i * (256 / SPIN_LEDS) + phase);
-        // triangle wave 0..255..0 so the sweep wraps smoothly around the ring
-        uint8_t tri = (pos < 128) ? (uint8_t)(pos << 1) : (uint8_t)((255 - pos) << 1);
-        uint8_t hue = (uint8_t)(base_hue - (SPIN_SPAN / 2) + ((uint16_t)tri * SPIN_SPAN / 255));
-        rgblight_sethsv_at(hue, 255, val, i);
-    }
-}
-
-// Slave side: render from the values the master sent.
-static void spin_sync_handler(uint8_t in_len, const void *in_data, uint8_t out_len, void *out_data) {
-    if (in_len < sizeof(spin_sync_t)) return;
-    const spin_sync_t *d = (const spin_sync_t *)in_data;
-    spin_render(d->hue, d->phase, d->val);
-}
-
 void keyboard_post_init_user(void) {
-    transaction_register_rpc(RGB_SYNC, spin_sync_handler);
-    rgblight_mode_noeeprom(RGBLIGHT_MODE_STATIC_LIGHT);  // silence the built-in effects
-    rgblight_sethsv_noeeprom(197, 255, 255);             // seed a colour
+    underglow_init();
 }
 
-// Master side: advance the animation and push it to the slave.
 void housekeeping_task_user(void) {
-    if (!is_keyboard_master()) return;
-    if (timer_elapsed(spin_timer) < SPIN_INTERVAL) return;
-    spin_timer = timer_read();
-    spin_phase += SPIN_SPEED;
-
-    uint8_t active = get_highest_layer(layer_state | default_layer_state);
-    // If a layer thumb key is physically held, show it now rather than waiting for the
-    // tap dance to resolve. A truly active higher layer (e.g. ADJUST) still wins.
-    uint8_t hint = td_raise_down ? _RAISE : td_lower_down ? _LOWER : 0;
-    if (hint > active) active = hint;
-    uint8_t hue = hue_for_layer(active);
-    uint8_t val = rgblight_is_enabled() ? rgblight_get_val() : 0;  // respect RGB_TOG / brightness keys
-
-    spin_render(hue, spin_phase, val);                            // this half
-    spin_sync_t payload = { hue, spin_phase, val };
-    transaction_rpc_send(RGB_SYNC, sizeof(payload), &payload);    // the other half
+    underglow_task();
 }
 
-// Track the physical up/down of the tap-dance layer keys (for the immediate underglow hint).
+// Tap dance defers layer_on() until the dance resolves, so tell the underglow about the
+// physical press directly and it can colour the held layer immediately.
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     switch (keycode) {
-        case TD(TD_LOWER): td_lower_down = record->event.pressed; break;
-        case TD(TD_RAISE): td_raise_down = record->event.pressed; break;
+        case TD(TD_LOWER): underglow_hold_hint(_LOWER, record->event.pressed); break;
+        case TD(TD_RAISE): underglow_hold_hint(_RAISE, record->event.pressed); break;
     }
     return true;  // let tap dance handle the key as usual
 }
