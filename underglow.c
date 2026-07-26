@@ -25,19 +25,37 @@
 #include "layers.h"
 #include "underglow.h"
 
-#define SPIN_LEDS     RGBLIGHT_LED_COUNT  // 12 total across both halves
-#define SPIN_INTERVAL 40                  // ms per frame (~25 fps)
-#define SPIN_SPEED    1                   // phase units per frame -> ~10 s per revolution
-#define SPIN_SPAN     34                  // hue spread across the ring (keeps the colour family)
+#define SPIN_INTERVAL 40  // ms per frame (~25 fps)
+#define SPIN_SPEED    2   // phase units per frame -> ~5 s per revolution of one half's ring
+#define SPIN_SPAN     34  // hue spread across the ring (keeps the colour family)
 
-// The two halves are the same PCB, one flipped, so the second half's LED chain runs
-// physically backwards. Verify on your board (see README) and set to 0 if not.
-#define SPIN_MIRROR_SECOND_HALF 1
+// Physical LED order, measured on the board (cable in the left half, TRRS across the top).
+// Each half's six LEDs form a perimeter ring, and BOTH chains run clockwise from that half's
+// own top-right corner -- the flipped PCB does not reverse the chain:
+//
+//   left  chain 0..5 : top-right(inner), right, bottom-right, bottom-left, left, top-left(outer)
+//   right chain 0..5 : top-right(outer), right, bottom-right, bottom-left, left, top-left(inner)
+//
+// The animation is one ring per half, six slots, driven by the same phase on both -- so slot s
+// is lit identically on both halves at the same instant. Because the chains are translations of
+// each other rather than reflections, the second half's write order has to be reversed to turn
+// that into a mirror image about the centreline. That pairs up:
+//
+//   left top-right(inner) <-> right top-left(inner)     (drawing: 1 <-> 7)
+//   left right            <-> right left                (            2 <-> 8)
+//   ... out to ...
+//   left top-left(outer)  <-> right top-right(outer)    (            6 <-> 12)
+//
+// 1 = butterfly, halves reflect each other. 0 = both halves in the same absolute orientation.
+#define SPIN_MIRROR_HALVES 1
 
-// 1 = sawtooth: one band travels continuously around the ring (what "spinning" looks like).
-// 0 = triangle: symmetric sweep, no hue seam, but it reads as two gradients meeting at the
-//     split gap rather than one travelling band.
-#define SPIN_SAWTOOTH 1
+// Hue curve: triangle wave, 0 -> 255 -> 0 around the ring.
+//
+// It has to be symmetric. The ring is a closed loop, so any curve used here must return to its
+// starting value -- a sawtooth ramp snaps back at the wrap and you get a hard edge (on RAISE,
+// hue 147 jumping straight to 113: azure to lime, no transition). The triangle is continuous
+// all the way around, which is why the original read as smooth.
+
 
 typedef struct __attribute__((packed)) {
     uint8_t hue;
@@ -67,32 +85,30 @@ static uint8_t hue_for_layer(uint8_t layer) {
 // so at 25 fps that was ~4 ms/frame of cli() -- enough to starve the bitbang split
 // serial link on D0 and drop the sync transactions below. One flush per frame instead.
 static void spin_render(uint8_t base_hue, uint8_t phase, uint8_t val) {
-    const uint8_t first = rgblight_ranges.clipping_start_pos;  // 0 on the left, 6 on the right
-    const uint8_t count = rgblight_ranges.clipping_num_leds;   // 6
+    const uint8_t count = rgblight_ranges.clipping_num_leds;  // 6 = this half's perimeter ring
 
 #if RGBLIGHT_LIMIT_VAL < 255
     if (val > RGBLIGHT_LIMIT_VAL) val = RGBLIGHT_LIMIT_VAL;
 #endif
 
-    for (uint8_t n = 0; n < count; n++) {
-        const uint8_t ring = first + n;  // 0..11: position in the shared logical ring
+    for (uint8_t slot = 0; slot < count; slot++) {
+        // Position around this half's ring. Same slot numbering and same phase on both halves,
+        // so slot s is always the same colour on both -- that is what keeps them locked.
+        // Multiply before dividing: 256/6 truncates to 42 and only spans 252, which leaves a
+        // visibly wider hue step at the wrap.
+        const uint8_t pos = (uint8_t)(((uint16_t)slot * 256u) / count + phase);
 
-        // 256 / 12 truncates to 21, which only spans 252 -> a visibly wider hue step at the
-        // 11->0 wrap. Multiply first, divide after.
-        const uint8_t pos = (uint8_t)(((uint16_t)ring * 256u) / SPIN_LEDS + phase);
-
-#if SPIN_SAWTOOTH
-        const uint8_t ramp = pos;
-#else
+        // triangle wave 0..255..0 so the sweep wraps smoothly around the ring
         const uint8_t ramp = (pos < 128) ? (uint8_t)(pos << 1) : (uint8_t)((255 - pos) << 1);
-#endif
-        const uint8_t hue = (uint8_t)(base_hue - (SPIN_SPAN / 2) + (((uint16_t)ramp * SPIN_SPAN) / 255));
-        const rgb_t   rgb = hsv_to_rgb((hsv_t){hue, 255, val});
+        const uint8_t hue  = (uint8_t)(base_hue - (SPIN_SPAN / 2) + (((uint16_t)ramp * SPIN_SPAN) / 255));
+        const rgb_t   rgb  = hsv_to_rgb((hsv_t){hue, 255, val});
 
-#if SPIN_MIRROR_SECOND_HALF
-        const uint8_t phys = (first == 0) ? n : (uint8_t)(count - 1 - n);
+        // Physical chain index. Writing slot s to chain s on both halves would translate the
+        // pattern sideways; reversing the right half reflects it instead.
+#if SPIN_MIRROR_HALVES
+        const uint8_t phys = is_keyboard_left() ? slot : (uint8_t)(count - 1 - slot);
 #else
-        const uint8_t phys = n;
+        const uint8_t phys = slot;
 #endif
         rgblight_driver.set_color(phys, rgb.r, rgb.g, rgb.b);
     }
