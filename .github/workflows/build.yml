@@ -7,35 +7,60 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  # Pinned deliberately. Two reasons: the .hex becomes reproducible (an unpinned
+  # master means the firmware silently changes under you between releases), and the
+  # QMK cache key below only pays off if it's stable -- master moves several times a
+  # day, so keying on its HEAD would miss almost every run.
+  # Bump when you want upstream fixes: github.com/qmk/qmk_firmware/releases
+  QMK_REF: "0.33.11"
+
 jobs:
   firmware:
     name: Compile firmware (.hex)
     runs-on: ubuntu-latest
+    # QMK's official image: CLI and the AVR toolchain are already installed, which
+    # replaces the apt-get + pip step entirely rather than caching it.
+    container: ghcr.io/qmk/qmk_cli:1.2.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Install AVR toolchain + QMK CLI
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-avr avr-libc binutils-avr
-          python3 -m pip install --user qmk
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # The container runs as root, so git refuses to touch the workspace otherwise.
+      - name: Trust the workspace
+        run: git config --global --add safe.directory '*'
+
+      - name: Cache QMK checkout
+        id: qmk-cache
+        uses: actions/cache@v6
+        with:
+          path: qmk_firmware
+          key: qmk-${{ env.QMK_REF }}-lufa-v1
 
       - name: Fetch QMK
+        if: steps.qmk-cache.outputs.cache-hit != 'true'
         run: |
-          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/qmk/qmk_firmware.git
+          git clone --depth 1 --branch "$QMK_REF" \
+            https://github.com/qmk/qmk_firmware.git qmk_firmware
+          # An AVR/LUFA board needs lib/lufa and nothing else. chibios,
+          # chibios-contrib, pico-sdk and lvgl are ARM/RP2040/display-only and are
+          # the bulk of what --recurse-submodules was downloading.
+          git -C qmk_firmware submodule update --init --depth 1 lib/lufa
 
       - name: Compile
+        env:
+          QMK_HOME: ${{ github.workspace }}/qmk_firmware
+          # Required. Without it, make runs `qmk git-submodule --sync`, which
+          # submodule-updates every uninitialised submodule -- undoing the trimming
+          # above and re-downloading chibios et al. at build time.
+          SKIP_GIT: yes
         run: |
-          export QMK_HOME="$GITHUB_WORKSPACE/qmk_firmware"
-          qmk config user.qmk_home="$QMK_HOME"
           KM="$QMK_HOME/keyboards/vitamins_included/keymaps/colemak"
           mkdir -p "$KM"
           cp *.c *.h rules.mk "$KM/"
           qmk compile -kb vitamins_included/rev2 -km colemak
 
       - name: Upload firmware
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: firmware-hex
           path: qmk_firmware/vitamins_included_rev2_colemak.hex
@@ -45,9 +70,9 @@ jobs:
     name: Render layer card (.pdf)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.x"
 
@@ -57,7 +82,7 @@ jobs:
           python3 make_card.py
 
       - name: Upload layer card
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: layer-card
           path: colemak_layer_card.pdf
@@ -72,12 +97,12 @@ jobs:
       contents: write # required to create the tag + release
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist # -> dist/firmware-hex/*, dist/layer-card/*
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: build-${{ github.run_number }}
           name: Build #${{ github.run_number }}
@@ -85,6 +110,7 @@ jobs:
             Automated build.
             Commit: ${{ github.sha }}
             Branch: ${{ github.ref_name }}
+            QMK: ${{ env.QMK_REF }}
 
             ${{ github.event.head_commit.message }}
           files: dist/**/*
