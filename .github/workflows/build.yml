@@ -1,0 +1,65 @@
+name: build
+
+# Builds two artifacts on every push / PR (and on demand):
+#   * firmware-hex  -> flashable vitamins_included_rev2_colemak.hex
+#   * layer-card    -> printable colemak_layer_card.pdf
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  firmware:
+    name: Compile firmware (.hex)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install AVR toolchain + QMK CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-avr avr-libc binutils-avr
+          python3 -m pip install --user qmk
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch QMK
+        run: git clone --depth 1 --recurse-submodules --shallow-submodules
+             https://github.com/qmk/qmk_firmware.git
+
+      - name: Compile
+        run: |
+          export QMK_HOME="$GITHUB_WORKSPACE/qmk_firmware"
+          qmk config user.qmk_home="$QMK_HOME"
+          KM="$QMK_HOME/keyboards/vitamins_included/keymaps/colemak"
+          mkdir -p "$KM"
+          cp keymap.c config.h rules.mk "$KM/"
+          qmk compile -kb vitamins_included/rev2 -km colemak
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-hex
+          path: qmk_firmware/vitamins_included_rev2_colemak.hex
+          if-no-files-found: error
+
+  card:
+    name: Render layer card (.pdf)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Render card
+        run: |
+          python3 -m pip install reportlab
+          python3 make_card.py
+
+      - name: Upload layer card
+        uses: actions/upload-artifact@v4
+        with:
+          name: layer-card
+          path: colemak_layer_card.pdf
+          if-no-files-found: error
