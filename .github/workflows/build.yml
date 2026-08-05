@@ -1,7 +1,8 @@
 name: build
 
-# On every push: compile the firmware, render the layer card, and publish a
-# GitHub Release with both bundled as assets. PRs build but don't release.
+# On every push: compile the firmware and render the layer card for BOTH boards
+# (tango + macropad), then publish a GitHub Release with all four assets bundled.
+# PRs build but don't release.
 on:
   push:
   pull_request:
@@ -17,11 +18,17 @@ env:
 
 jobs:
   firmware:
-    name: Compile firmware (.hex)
+    name: Compile firmware (${{ matrix.name }})
     runs-on: ubuntu-latest
     # QMK's official image: CLI and the AVR toolchain are already installed, which
     # replaces the apt-get + pip step entirely rather than caching it.
     container: ghcr.io/qmk/qmk_cli:1.2.0
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: tango,    km: colemak,  src: tango }
+          - { name: macropad, km: macropad, src: macropad }
     steps:
       - uses: actions/checkout@v7
 
@@ -54,21 +61,27 @@ jobs:
           # above and re-downloading chibios et al. at build time.
           SKIP_GIT: yes
         run: |
-          KM="$QMK_HOME/keyboards/vitamins_included/keymaps/colemak"
+          KM="$QMK_HOME/keyboards/vitamins_included/keymaps/${{ matrix.km }}"
           mkdir -p "$KM"
-          cp *.c *.h rules.mk "$KM/"
-          qmk compile -kb vitamins_included/rev2 -km colemak
+          cp ${{ matrix.src }}/*.c ${{ matrix.src }}/*.h ${{ matrix.src }}/rules.mk "$KM/"
+          qmk compile -kb vitamins_included/rev2 -km ${{ matrix.km }}
 
       - name: Upload firmware
         uses: actions/upload-artifact@v7
         with:
-          name: firmware-hex
-          path: qmk_firmware/vitamins_included_rev2_colemak.hex
+          name: firmware-hex-${{ matrix.name }}
+          path: qmk_firmware/vitamins_included_rev2_${{ matrix.km }}.hex
           if-no-files-found: error
 
   card:
-    name: Render layer card (.pdf)
+    name: Render layer card (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: tango,    src: tango,    out: lets_tango_layer_card.pdf }
+          - { name: macropad, src: macropad, out: macropad_card.pdf }
     steps:
       - uses: actions/checkout@v7
 
@@ -77,6 +90,10 @@ jobs:
           python-version: "3.x"
 
       - name: Render card
+        env:
+          BOARD_CONFIG: ${{ matrix.src }}/card.json
+          KEYMAP_SRC: ${{ matrix.src }}/keymap.c
+          CARD_OUT: ${{ matrix.out }}
         run: |
           python3 -m pip install reportlab
           python3 make_card.py
@@ -84,13 +101,13 @@ jobs:
       - name: Upload layer card
         uses: actions/upload-artifact@v7
         with:
-          name: layer-card
-          path: lets_tango_layer_card.pdf
+          name: layer-card-${{ matrix.name }}
+          path: ${{ matrix.out }}
           if-no-files-found: error
 
   release:
     name: Publish release
-    needs: [firmware, card]
+    needs: [firmware, card]  # waits for all matrix legs of both jobs
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -99,7 +116,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
-          path: dist # -> dist/firmware-hex/*, dist/layer-card/*
+          path: dist # -> dist/firmware-hex-{tango,macropad}/*, dist/layer-card-{tango,macropad}/*
 
       - name: Publish release
         uses: softprops/action-gh-release@v3

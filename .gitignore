@@ -5,8 +5,9 @@
 *.uf2
 .build/
 
-# Layer-card render (regenerate from make_card.py); keep if you'd rather version it
+# Layer-card renders (regenerate from make_card.py); keep if you'd rather version them
 lets_tango_layer_card.pdf
+macropad_card.pdf
 original_alu40_zmk_card.pdf
 
 # Python (layer-card generator)

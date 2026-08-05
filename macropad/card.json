@@ -1,0 +1,45 @@
+{
+  "layout_macro": "LAYOUT_ortho_4x12",
+  "rows": 4,
+  "cols": 12,
+  "cols_shown": 6,
+  "split_after": null,
+  "cell_w": 63.5,
+  "cell_h": 20,
+  "gap": 12,
+  "title": "Agent pad",
+  "subtitle": "vitamins_included left half  ·  solo USB  ·  Claude Code",
+  "layer_labels": {
+    "_CTL": "Fn"
+  },
+  "label_overrides": {
+    "LSFT(KC_TAB)": "Mode",
+    "CC_YESALL": "Yes-all",
+    "CC_REWIND": "Rewind",
+    "CC_CONT": "Cont",
+    "CC_COMPACT": "Compact",
+    "CC_CLEAR": "Clear",
+    "CC_REVIEW": "Review",
+    "CC_MODEL": "Model",
+    "CC_COST": "Cost",
+    "CC_AGENT_PREV": "«Agent",
+    "CC_AGENT_NEXT": "Agent»",
+    "CC_NEW": "New",
+    "CC_JUMP": "Jump",
+    "KC_PGUP": "Scrl↑",
+    "KC_PGDN": "Scrl↓",
+    "CC_PLAN": "Plan",
+    "CC_VERBOSE": "Verbose",
+    "CC_DIFF": "Diff",
+    "CC_RESUME": "Resume",
+    "CC_OSLAY": "OSLay",
+    "DB_TOGG": "Dbg",
+    "UG_HUEU": "Color"
+  },
+  "layers": [
+    {"name": "Base", "sym": "_BASE", "trigger": "the agent loop · memorised",
+     "header": "#0E8C99", "tint": "#E4F6F8", "text": "#0A4A53", "shades": ["#00C2CC", "#00A3E6", "#3D7DFF"]},
+    {"name": "Control", "sym": "_CTL", "trigger": "hold Fn   ·   QMK + OS-layout toggle",
+     "header": "#BF2A20", "tint": "#FBE8E6", "text": "#6E140E", "shades": ["#55D06A", "#B0009B", "#FF0000"]}
+  ]
+}

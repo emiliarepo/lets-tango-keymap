@@ -1,0 +1,32 @@
+{
+  "layout_macro": "LAYOUT_ortho_4x12",
+  "rows": 4,
+  "cols": 12,
+  "cols_shown": 12,
+  "split_after": 6,
+  "cell_w": 63.5,
+  "cell_h": 20,
+  "gap": 12,
+  "title": "Let's Tango – Colemak layer map",
+  "subtitle": "vitamins_included/rev2  ·  split 6 | 6",
+  "layer_labels": {
+    "_COLEMAK": "Colemk",
+    "_QWERTY": "QWERTY",
+    "_LOWER": "LOWER",
+    "_RAISE": "RAISE",
+    "_ADJUST": "ADJUST"
+  },
+  "label_overrides": {},
+  "layers": [
+    {"name": "Colemak", "sym": "_COLEMAK", "trigger": "base · default",
+     "header": "#6B2FB0", "tint": "#EFE9FA", "text": "#2E1560", "shades": ["#5A00FF", "#A200FF", "#CA00DC"]},
+    {"name": "QWERTY", "sym": "_QWERTY", "trigger": "base · toggle on Adjust",
+     "header": "#2E9E3E", "tint": "#E7F5E7", "text": "#1C5C24", "shades": ["#4EFF00", "#00FF00", "#00FF4E"]},
+    {"name": "Raise", "sym": "_RAISE", "trigger": "hold RAISE",
+     "header": "#0E8C99", "tint": "#E4F6F8", "text": "#0A4A53", "shades": ["#00FFD2", "#00F0FF", "#00A3E6"]},
+    {"name": "Lower", "sym": "_LOWER", "trigger": "hold LOWER   ·   symbols + numpad",
+     "header": "#C67200", "tint": "#FBEFDC", "text": "#6E4200", "shades": ["#FF6C00", "#FFA800", "#E6CD00"]},
+    {"name": "Adjust", "sym": "_ADJUST", "trigger": "hold RAISE + LOWER",
+     "header": "#BF2A20", "tint": "#FBE8E6", "text": "#6E140E", "shades": ["#FF0024", "#FF0000", "#E62B00"]}
+  ]
+}

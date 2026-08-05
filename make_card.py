@@ -1,17 +1,35 @@
-import os, re
+import os, re, json
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.colors import HexColor, white
 
-W, H = landscape(A4)  # 841.89 x 595.28
+# ---- Board config (per-board JSON) + env ---------------------------------------
+# BOARD_CONFIG : path to the board's card.json (geometry, title, layers, labels)
+# KEYMAP_SRC   : the keymap.c to parse
+# CARD_OUT     : output PDF
+# Defaults target the Tango board from its new home so `python make_card.py` still
+# renders the Tango card locally after the restructure.
+BOARD_CONFIG = os.environ.get("BOARD_CONFIG", "tango/card.json")
+KEYMAP_SRC = os.environ.get("KEYMAP_SRC", "tango/keymap.c")
 OUT = os.environ.get("CARD_OUT", "lets_tango_layer_card.pdf")
-KEYMAP_SRC = os.environ.get("KEYMAP_SRC", "keymap.c")
+
+with open(BOARD_CONFIG, encoding="utf-8") as f:
+    CFG = json.load(f)
+
+LAYOUT_MACRO = CFG["layout_macro"]
+ROWS = CFG["rows"]
+COLS = CFG["cols"]                       # columns in the LAYOUT macro (parse width)
+COLS_SHOWN = CFG.get("cols_shown", COLS)  # columns actually drawn (macropad = left 6)
+SPLIT_AFTER = CFG.get("split_after")      # insert a gap after this column, or null
+CELL_W = CFG.get("cell_w", 63.5)
+CELL_H = CFG.get("cell_h", 20)
+GAP = CFG.get("gap", 12)
+
+W, H = landscape(A4)  # 841.89 x 595.28
 c = canvas.Canvas(OUT, pagesize=(W, H))
 
-CELL_W = 63.5
-CELL_H = 20
-GAP = 12                      # split gap after column 6
-GRID_W = 12 * CELL_W + GAP    # 774
+HAS_GAP = SPLIT_AFTER is not None and 0 < SPLIT_AFTER < COLS_SHOWN
+GRID_W = COLS_SHOWN * CELL_W + (GAP if HAS_GAP else 0)
 START_X = round((W - GRID_W) / 2)
 INK = HexColor("#2C2C2A")
 MUTE = HexColor("#73726C")
@@ -20,11 +38,11 @@ TRANS_STROKE = HexColor("#E4E3DD")
 
 def col_x(i):
     x = START_X + i * CELL_W
-    if i >= 6:
+    if HAS_GAP and i >= SPLIT_AFTER:
         x += GAP
     return x
 
-# ---- Parse keymap.c: pull the 48 keycodes out of each LAYOUT_ortho_4x12 block ----
+# ---- Parse keymap.c: pull the ROWS*COLS keycodes out of each LAYOUT block ----
 
 def strip_comments(s):
     s = re.sub(r"/\*.*?\*/", "", s, flags=re.S)
@@ -33,7 +51,7 @@ def strip_comments(s):
 
 def extract_layer(src, sym):
     i = src.index("[" + sym + "]")
-    i = src.index("LAYOUT_ortho_4x12(", i) + len("LAYOUT_ortho_4x12(")
+    i = src.index(LAYOUT_MACRO + "(", i) + len(LAYOUT_MACRO + "(")
     depth, buf = 1, []
     while depth > 0:
         ch = src[i]
@@ -59,8 +77,8 @@ def extract_layer(src, sym):
     if cur.strip():
         tokens.append(cur)
     tokens = [" ".join(t.split()) for t in tokens if t.strip()]
-    assert len(tokens) == 48, "%s: expected 48 keys, got %d" % (sym, len(tokens))
-    return [tokens[r*12:(r+1)*12] for r in range(4)]
+    assert len(tokens) == ROWS * COLS, "%s: expected %d keys, got %d" % (sym, ROWS * COLS, len(tokens))
+    return [tokens[r*COLS:(r+1)*COLS] for r in range(ROWS)]
 
 # ---- Keycode -> display label ----
 
@@ -92,7 +110,12 @@ for n in range(10):
 for n in range(1, 25):
     PLAIN["KC_F" + str(n)] = "F" + str(n)
 
-LAYER_LABEL = {"_COLEMAK": "Colemk", "_QWERTY": "QWERTY", "_LOWER": "LOWER", "_RAISE": "RAISE", "_ADJUST": "ADJUST"}
+# Per-board overrides win over the defaults above (friendly labels for the board's
+# custom keycodes, e.g. CC_CONT -> "Cont"). Empty for Tango -> output unchanged.
+PLAIN.update(CFG.get("label_overrides", {}))
+
+# Layer keys (MO/PDF/...) render with the board's short layer labels.
+LAYER_LABEL = dict(CFG.get("layer_labels", {}))
 MOD_LABEL = {"LSFT": "Sft", "RSFT": "Sft", "LCTL": "Ctl", "RCTL": "Ctl",
              "LALT": "Alt", "RALT": "Alt", "LGUI": "Gui", "RGUI": "Gui"}
 TAP_ABBR = {"Enter": "Ent"}
@@ -118,25 +141,14 @@ def label_for(tok):
     _unmapped.add(tok)
     return tok.replace("KC_", "")
 
-# ---- Presentation (names / colours / triggers stay here; keys come from keymap.c) ----
+# ---- Presentation (names / colours / triggers come from the board config) ----
 
-LAYER_META = [
-    {"name": "Colemak", "sym": "_COLEMAK", "trigger": "base \u00b7 default",
-     "header": "#6B2FB0", "tint": "#EFE9FA", "text": "#2E1560", "shades": ["#5A00FF", "#A200FF", "#CA00DC"]},
-    {"name": "QWERTY", "sym": "_QWERTY", "trigger": "base \u00b7 toggle on Adjust",
-     "header": "#2E9E3E", "tint": "#E7F5E7", "text": "#1C5C24", "shades": ["#4EFF00", "#00FF00", "#00FF4E"]},
-    {"name": "Raise", "sym": "_RAISE", "trigger": "hold RAISE",
-     "header": "#0E8C99", "tint": "#E4F6F8", "text": "#0A4A53", "shades": ["#00FFD2", "#00F0FF", "#00A3E6"]},
-    {"name": "Lower", "sym": "_LOWER", "trigger": "hold LOWER   \u00b7   symbols + numpad",
-     "header": "#C67200", "tint": "#FBEFDC", "text": "#6E4200", "shades": ["#FF6C00", "#FFA800", "#E6CD00"]},
-    {"name": "Adjust", "sym": "_ADJUST", "trigger": "hold RAISE + LOWER",
-     "header": "#BF2A20", "tint": "#FBE8E6", "text": "#6E140E", "shades": ["#FF0024", "#FF0000", "#E62B00"]},
-]
+LAYER_META = CFG["layers"]
 
-src = strip_comments(open(KEYMAP_SRC).read())
+src = strip_comments(open(KEYMAP_SRC, encoding="utf-8").read())
 layers = []
 for meta in LAYER_META:
-    rows = [[label_for(t) for t in row] for row in extract_layer(src, meta["sym"])]
+    rows = [[label_for(t) for t in row[:COLS_SHOWN]] for row in extract_layer(src, meta["sym"])]
     layers.append(dict(meta, rows=rows))
 if _unmapped:
     print("WARNING: unmapped keycodes ->", ", ".join(sorted(_unmapped)))
@@ -145,10 +157,10 @@ if _unmapped:
 y = H - 34
 c.setFillColor(INK)
 c.setFont("Helvetica-Bold", 14)
-c.drawString(START_X, y, "Let's Tango \u2013 Colemak layer map")
+c.drawString(START_X, y, CFG["title"])
 c.setFont("Helvetica", 8.5)
 c.setFillColor(MUTE)
-c.drawRightString(START_X + GRID_W, y + 1, "vitamins_included/rev2  \u00b7  split 6 | 6")
+c.drawRightString(START_X + GRID_W, y + 1, CFG.get("subtitle", ""))
 y -= 9
 c.setStrokeColor(HexColor("#B4B2A9")); c.setLineWidth(0.5)
 c.line(START_X, y, START_X + GRID_W, y)
@@ -187,7 +199,7 @@ def draw_grid(y_top, L):
                 c.setFont("Helvetica", fs)
                 c.setFillColor(txtc)
                 c.drawCentredString(x + CELL_W / 2, yb + CELL_H / 2 - fs / 2 + 1.4, cell)
-    return rows_top - 4 * CELL_H
+    return rows_top - ROWS * CELL_H
 
 for L in layers:
     bottom = draw_grid(y, L)
