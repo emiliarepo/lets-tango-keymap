@@ -62,11 +62,12 @@ matrix-pinout guesswork.
 slash-command keys (`Compact`/`Clear`/`Review`/`Model`/`Cost`/`Plan`/`Diff`/
 `Resume`) type the command + Enter. `Verbose` is Ctrl-O (transcript toggle).
 
-> **Placeholders (Task 2 upgrades these):** `Yes-all` (Claude Code has no dedicated
-> "approve & don't ask again" key — this sends a best-effort *pick 2nd option*),
-> and the fleet keys `◄Agent`/`Agent►`/`New` (default **tmux** `C-b p`/`n`/`c`) and
-> `Jump` (currently a no-op). All Claude-Code control strings are `#define`s at the
-> top of `macropad/keymap.c`, flagged ⚠️ to confirm against your installed version.
+> **Fleet keys drive the companion daemon:** `◄Agent`/`Agent►`/`New`/`Jump` send Raw
+> HID events to the host daemon (`daemon/`), which maps them to tmux + window focus
+> — see `daemon/README.md`. `Yes-all` is still a best-effort placeholder (Claude Code
+> has no dedicated "approve & don't ask again" key — this sends a best-effort *pick
+> 2nd option*). All Claude-Code control strings are `#define`s at the top of
+> `macropad/keymap.c`.
 
 ### Control layer `_CTL` — hold `Fn`
 
@@ -99,13 +100,18 @@ while `Fn` is held (like the Tango firmware colours its active layer).
 
 ### Firmware shape
 
-Mirrors the Tango layout — `keymap.c` is glue (`keymaps[]` + hooks), with two small
+Mirrors the Tango layout — `keymap.c` is glue (`keymaps[]` + hooks), with small
 modules beside it:
 
 - `oskbd.c/.h` — OS keyboard-layout awareness (LUT, EEPROM persistence, typing).
 - `underglow.c/.h` — static RGBLIGHT. Not the Tango `underglow.c` (that's a
-  split-RPC animation). Exposes `set_status_color()` — the **Task 2 seam** where the
-  companion daemon will drive the underglow from agent status over Raw HID.
+  split-RPC animation). Exposes `set_status_color()`, driven by the companion
+  daemon over Raw HID; falls back to the static Task-1 colour when the daemon is
+  absent or stale.
+- `status.c/.h` — Raw HID status in, underglow out: receives the daemon's status
+  byte and renders it (idle dim / running amber-breathe / waiting green / error
+  red) through `set_status_color()`. Needs `RAW_ENABLE = yes` (set in
+  `macropad/rules.mk`).
 
 ---
 
@@ -114,7 +120,8 @@ modules beside it:
 ```
 ├── .github/workflows/build.yml   # CI: firmware + card for BOTH boards, then release
 ├── tango/                        # full split keyboard (keymap.c, layers.h, underglow.c/.h, config.h, rules.mk, card.json)
-├── macropad/                     # agent pad (keymap.c, layers.h, oskbd.c/.h, underglow.c/.h, config.h, rules.mk, card.json)
+├── macropad/                     # agent pad (keymap.c, layers.h, oskbd.c/.h, underglow.c/.h, status.c/.h, config.h, rules.mk, card.json)
+├── daemon/                       # companion daemon (Python: reporter, listener, aggregator, hid_link, actions, main loop)
 ├── make_card.py                  # board-config-driven layer-card generator
 ├── README.md
 └── .gitignore
@@ -165,11 +172,11 @@ single half and run it solo over USB.
 
 ---
 
-## Task 2 (future) — companion daemon
+## `daemon/` — agent-aware companion
 
-A host daemon will make the pad *agent-aware*: Claude Code hooks report per-session
-status to the daemon, which pushes the most-urgent state to the pad over Raw HID
-(underglow = idle/thinking/waiting) and handles the fleet keys (`Jump` focuses the
-waiting session; `◄Agent`/`Agent►`/`New` cycle/spawn sessions). The Task-1 firmware
-already leaves the seams: `set_status_color()`, the fleet keys as custom keycodes,
-and a `RAW_ENABLE` note in `macropad/rules.mk`.
+A host daemon makes the macropad *agent-aware*. It reads Claude Code hook events
+and drives the pad's underglow over Raw HID (idle dim / running amber-breathe /
+waiting green / error red), and maps the fleet keys to real actions: `Jump`
+focuses the waiting session, `◄Agent`/`Agent►` cycle tmux windows, and `New` spawns
+one. The pad falls back to its static Task-1 colour whenever the daemon is off.
+See `daemon/README.md` for install and config.
