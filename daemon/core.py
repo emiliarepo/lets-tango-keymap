@@ -1,17 +1,26 @@
 from __future__ import annotations
-import tomllib
+
 from dataclasses import dataclass, field
 from enum import IntEnum
+
+import tomllib
 
 RAW_REPORT_SIZE = 32
 CMD_STATUS = 0x01
 CMD_FLEET = 0x10
 
 class Status(IntEnum):
-    NONE = 0; IDLE = 1; RUNNING = 2; WAITING = 3; ERROR = 4
+    NONE = 0
+    IDLE = 1
+    RUNNING = 2
+    WAITING = 3
+    ERROR = 4
 
 class FleetKey(IntEnum):
-    JUMP = 0; AGENT_PREV = 1; AGENT_NEXT = 2; NEW = 3
+    JUMP = 0
+    AGENT_PREV = 1
+    AGENT_NEXT = 2
+    NEW = 3
 
 STATUS_RANK = {Status.NONE:0, Status.IDLE:1, Status.RUNNING:2, Status.WAITING:3, Status.ERROR:4}
 
@@ -41,7 +50,7 @@ class Config:
     new_window_argv: list[str] = field(default_factory=lambda: ["new-window", "claude"])
 
     @classmethod
-    def load(cls, path: str | None) -> "Config":
+    def load(cls, path: str | None) -> Config:
         c = cls()
         if not path:
             return c

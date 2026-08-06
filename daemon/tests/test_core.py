@@ -1,5 +1,5 @@
 from daemon import core
-from daemon.core import Status, FleetKey, Config
+from daemon.core import Config, Status
 
 
 def test_wire_constants():
