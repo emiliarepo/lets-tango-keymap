@@ -51,6 +51,18 @@ class Daemon:
         self.agg.expire(now, self.cfg.session_ttl_s)
 
 
+def _tick_safe(d: Daemon) -> None:
+    """Run one `Daemon.tick()`, absorbing any unexpected exception so a
+    single bad iteration (e.g. a fleet-key action failing because tmux is
+    missing) never takes down the whole daemon -- the status underglow must
+    keep working even when the tmux/Win32 side degrades. Best-effort: report
+    to stderr and move on."""
+    try:
+        d.tick()
+    except Exception as exc:  # noqa: BLE001 - must never kill the main loop
+        print(f"agentpad_daemon: tick failed: {exc!r}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else list(argv)
     config_path = args[0] if args else None
@@ -59,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     d.listener.start()
     try:
         while True:
-            d.tick()
+            _tick_safe(d)
             time.sleep(0.05)
     except KeyboardInterrupt:
         pass

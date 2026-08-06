@@ -19,7 +19,10 @@ def new_argv(cfg: Config) -> list[str]:
 
 def run(cmds: list[list[str]]) -> None:
     for c in cmds:
-        subprocess.run(["tmux", *c], check=False)
+        try:
+            subprocess.run(["tmux", *c], check=False)
+        except OSError:
+            pass  # e.g. FileNotFoundError when tmux isn't on native Windows PATH
 
 
 def foreground(cfg: Config) -> None:
