@@ -5,83 +5,46 @@
 #include "layers.h"
 
 #define CMD_STATUS 0x01
-#define CMD_FLEET  0x10
 #define STATUS_STALE_MS 5000
-#define BREATHE_PERIOD_MS 2600
-// Cap the underglow repaint rate. Each set_status_color() is a full WS2812 flush
-// with interrupts disabled (~0.4 ms); repainting on every housekeeping pass
-// (~1000/s) starves USB and drops raw-HID packets (same class of bug the Tango
-// underglow avoids by running at ~25 fps). ~50 fps is plenty smooth for a breathe.
-#define STATUS_FRAME_MS 20
 
-// Every status uses the user's current underglow level (rgblight_get_val), so
-// UG_VALU/UG_VALD govern brightness for all of them. Only `running` varies its
-// brightness -- that's the breathe animation itself.
 enum { ST_NONE=0, ST_IDLE, ST_RUNNING, ST_WAITING, ST_ERROR };
 
 extern void underglow_repaint(void);   // arbiter in keymap.c
 
 static uint8_t  s_code  = ST_NONE;
 static uint16_t s_last  = 0;
-static bool     s_fresh = false;
+static bool     s_fresh = false;       // true only for the "active" states below
 
 void raw_hid_receive(uint8_t *data, uint8_t length) {
     if (length < 2 || data[0] != CMD_STATUS) return;
     s_code = data[1];
     s_last = timer_read();
-    // `none` (no active Claude session) is NOT a colour to paint -- it means "let
-    // the pad show its normal alive colour", same as when the daemon is absent.
-    // Only idle/running/waiting/error take over the underglow.
-    s_fresh = (s_code != ST_NONE);
-    underglow_repaint();               // repaint immediately on change
+    // Only running/waiting/error take over the underglow. none + idle mean
+    // "nothing urgent" -> show the pad's normal alive colour (keymap's local policy).
+    s_fresh = (s_code == ST_RUNNING || s_code == ST_WAITING || s_code == ST_ERROR);
+    underglow_repaint();               // paint once, on change
 }
 
 void status_init(void) { s_fresh = false; }
 bool status_is_active(void) { return s_fresh; }
 
-// Continuous breathe triangle 0..255..0, advanced by elapsed time rather than
-// (timer_read() % period). timer_read() is a 16-bit ms counter that wraps every
-// ~65 s and 65536 isn't a multiple of the period, so the old modulo produced a
-// visible discontinuity at each wrap. Unsigned 16-bit subtraction gives the correct
-// elapsed delta across the wrap, so the accumulated phase stays smooth.
-static uint16_t breathe_phase = 0;
-static uint16_t breathe_last  = 0;
-
-static uint8_t breathe_tri(void) {
-    const uint16_t now = timer_read();
-    breathe_phase += (uint16_t)(now - breathe_last);   // wrap-safe elapsed ms
-    breathe_last = now;
-    while (breathe_phase >= BREATHE_PERIOD_MS) breathe_phase -= BREATHE_PERIOD_MS;
-
-    const uint16_t half = BREATHE_PERIOD_MS / 2;
-    const uint16_t d = breathe_phase < half ? breathe_phase : (BREATHE_PERIOD_MS - breathe_phase);
-    return (uint8_t)((uint32_t)d * 255u / half);       // 0..255 up, 255..0 down
-}
-
+// Solid colours only -- no animation. Each renders at the user's current
+// brightness (rgblight_get_val), which stays put because we set it to itself.
 void status_render(void) {
-    const uint8_t uval = rgblight_get_val();  // the user's brightness (UG_VALU/VALD)
+    const uint8_t v = rgblight_get_val();
     switch (s_code) {
-        case ST_NONE:    set_status_color(0, 0, 0); break;
-        case ST_IDLE:    set_status_color(170, 180, uval); break;
-        case ST_WAITING: set_status_color(85, 255, uval); break;
-        case ST_ERROR:   set_status_color(0, 255, uval); break;
-        case ST_RUNNING: // amber, breathing across the user's full brightness
-            set_status_color(28, 255, (uint8_t)((uint16_t)uval * breathe_tri() / 255u));
-            break;
-        default: s_fresh = false; break;
+        case ST_RUNNING: set_status_color(28, 255, v); break;  // amber = working
+        case ST_WAITING: set_status_color(85, 255, v); break;  // green = your turn
+        case ST_ERROR:   set_status_color(0,  255, v); break;  // red   = error
+        default:         break;                                // not reached when active
     }
 }
 
 void status_tick(void) {
-    static uint16_t frame_timer = 0;
     if (!s_fresh) return;
     if (timer_elapsed(s_last) > STATUS_STALE_MS) {
         s_fresh = false;
-        underglow_repaint();               // hand colour back to local policy
-        return;
+        underglow_repaint();           // daemon went quiet -> back to the alive colour
     }
-    if (get_highest_layer(layer_state) == _CTL) return;  // _CTL shows control hue
-    if (timer_elapsed(frame_timer) < STATUS_FRAME_MS) return;  // cap the flush rate
-    frame_timer = timer_read();
-    status_render();                        // drives the breathe animation
+    // Solid colour: nothing to animate; it was painted on change / layer switch.
 }
