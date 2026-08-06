@@ -105,6 +105,19 @@ jobs:
           path: ${{ matrix.out }}
           if-no-files-found: error
 
+  daemon-lint:
+    name: Lint daemon (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Ruff
+        run: |
+          python -m pip install ruff
+          ruff check daemon/
+
   release:
     name: Publish release
     needs: [firmware, card]  # waits for all matrix legs of both jobs

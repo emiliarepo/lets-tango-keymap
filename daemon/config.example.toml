@@ -1,0 +1,12 @@
+port = 8787
+keepalive_s = 2.0
+stale_s = 5.0
+foreground = true
+terminal_exe = "WindowsTerminal.exe"
+new_window_argv = ["new-window", "claude"]
+
+[device]
+vid = 0x1209
+pid = 0xBEE5
+usage_page = 0xFF60
+usage = 0x61
