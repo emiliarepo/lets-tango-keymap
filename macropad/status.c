@@ -8,6 +8,11 @@
 #define CMD_FLEET  0x10
 #define STATUS_STALE_MS 5000
 #define BREATHE_PERIOD_MS 2600
+// Cap the underglow repaint rate. Each set_status_color() is a full WS2812 flush
+// with interrupts disabled (~0.4 ms); repainting on every housekeeping pass
+// (~1000/s) starves USB and drops raw-HID packets (same class of bug the Tango
+// underglow avoids by running at ~25 fps). ~50 fps is plenty smooth for a breathe.
+#define STATUS_FRAME_MS 20
 
 // Every status uses the user's current underglow level (rgblight_get_val), so
 // UG_VALU/UG_VALD govern brightness for all of them. Only `running` varies its
@@ -24,7 +29,10 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
     if (length < 2 || data[0] != CMD_STATUS) return;
     s_code = data[1];
     s_last = timer_read();
-    s_fresh = true;
+    // `none` (no active Claude session) is NOT a colour to paint -- it means "let
+    // the pad show its normal alive colour", same as when the daemon is absent.
+    // Only idle/running/waiting/error take over the underglow.
+    s_fresh = (s_code != ST_NONE);
     underglow_repaint();               // repaint immediately on change
 }
 
@@ -65,6 +73,7 @@ void status_render(void) {
 }
 
 void status_tick(void) {
+    static uint16_t frame_timer = 0;
     if (!s_fresh) return;
     if (timer_elapsed(s_last) > STATUS_STALE_MS) {
         s_fresh = false;
@@ -72,5 +81,7 @@ void status_tick(void) {
         return;
     }
     if (get_highest_layer(layer_state) == _CTL) return;  // _CTL shows control hue
+    if (timer_elapsed(frame_timer) < STATUS_FRAME_MS) return;  // cap the flush rate
+    frame_timer = timer_read();
     status_render();                        // drives the breathe animation
 }
