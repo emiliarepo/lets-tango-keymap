@@ -57,9 +57,10 @@ they need the repo root on `sys.path`, not `daemon/` itself).
    ```
    copy daemon\config.example.toml daemon\config.toml
    ```
-   Edit `daemon\config.toml` for your setup (see **Config** below). Keep it
-   at an absolute path you can reference from the Task Scheduler command in
-   the next section.
+   Edit `daemon\config.toml` for your setup (see **Config** below). This
+   lands at `<repo>\daemon\config.toml` — the Autostart command below points
+   at exactly that path (as an absolute path), so if you put it somewhere
+   else, update that command to match.
 
 ## Autostart
 
@@ -69,14 +70,27 @@ Windows Service (a service fights HID access and session-0 isolation; see
 `pythonw` so it runs with no console window:
 
 ```
-schtasks /create /tn "AgentpadDaemon" /sc onlogon /rl limited /f /tr "cmd /c \"cd /d C:\git\lets-tango-keymap && pythonw -m daemon.agentpad_daemon config.toml\""
+schtasks /create /tn "AgentpadDaemon" /sc onlogon /rl limited /f /tr "cmd /c \"cd /d C:\git\lets-tango-keymap && pythonw -m daemon.agentpad_daemon C:\git\lets-tango-keymap\daemon\config.toml\""
 ```
 
 Notes on this exact command:
 
+- The config argument is an **absolute path**,
+  `C:\git\lets-tango-keymap\daemon\config.toml` — matching exactly where
+  **Install step 4** above copies `config.example.toml` to
+  (`<repo>\daemon\config.toml`). This has to line up: a bare `config.toml`
+  here would resolve relative to the command's working directory (the `cd
+  /d C:\git\lets-tango-keymap` before it), i.e. `<repo>\config.toml` — one
+  level up from where Install actually puts the file — and
+  `Config.load()`'s bare `open(path, "rb")` (no try/except) would raise an
+  uncaught `FileNotFoundError` that a `pythonw`-launched logon task fails on
+  **silently** (no console, nothing visible). Using the absolute path here
+  sidesteps that mismatch entirely; if you did put `config.toml` somewhere
+  else, use that absolute path instead — just make sure it's the same file
+  Install step 4 created.
 - `agentpad_daemon.main()` takes the config path as a **plain positional
   argument** — `python -m daemon.agentpad_daemon <path-to-config.toml>` — it
-  does **not** parse a `--config` flag. Passing `--config config.toml` makes
+  does **not** parse a `--config` flag. Passing `--config <path>` makes
   `argv[0]` be the literal string `--config`, and `Config.load("--config")`
   then fails with `FileNotFoundError: '--config'` (verified locally). Always
   pass the config path directly, with nothing in front of it.
@@ -85,10 +99,12 @@ Notes on this exact command:
   `ModuleNotFoundError: No module named 'daemon'` because `agentpad_daemon.py`
   imports its sibling modules as `daemon.xxx`, which only resolves when the
   repo root (the parent of `daemon/`) is on `sys.path` (verified locally).
-  The `cd /d ... &&` in the command above is what puts the repo root there.
+  The `cd /d ... &&` in the command above is what puts the repo root there —
+  still needed even though the config argument itself is now absolute.
 - `/rl limited` = run with the logged-on user's normal (non-admin) rights.
-- Adjust the repo path (`C:\git\lets-tango-keymap`) and the config filename
-  if `config.toml` isn't in the repo root.
+- Adjust the repo path (`C:\git\lets-tango-keymap`) if your checkout lives
+  somewhere else — both occurrences (the `cd /d` target and the config path)
+  need to move together.
 - `pythonw.exe` ships alongside `python.exe` in the same install directory;
   it must be on `PATH` for the bare `pythonw` above to resolve.
 
@@ -158,15 +174,17 @@ it still works standalone with the daemon off.
   on (`session_id` and `cwd` present on every hook's stdin JSON) were checked
   against the current Claude Code hooks documentation during implementation
   and matched exactly — this is confirmed, not a to-do.
-- **`AGENTPAD_PORT` is the single source of truth for the port, and reporter
-  and daemon each read it from a different place.** `reporter.py` reads the
-  `AGENTPAD_PORT` environment variable (default `8787`) at the time each hook
-  fires; the daemon reads `port` from `config.toml` (also default `8787`).
-  Nothing keeps these in sync automatically — if you change one, change the
-  other (and make sure `AGENTPAD_PORT` is set in whatever environment your
-  Claude Code hooks actually run in, not just your interactive shell).
-  Additionally, `reporter.py` does `int(env.get("AGENTPAD_PORT", ...))` with
-  no validation: a **non-numeric `AGENTPAD_PORT` raises `ValueError`
+- **There's no automatic port sync between reporter and daemon.**
+  `reporter.py` reads the `AGENTPAD_PORT` environment variable (default
+  `8787`) at the time each hook fires; the daemon reads `port` from
+  `config.toml` (also default `8787`) — two independent settings, each read
+  from a different place, and nothing keeps them in sync automatically. If
+  you change one, set the other to match: `AGENTPAD_PORT` and `config.toml`'s
+  `port` need to be the same value (and `AGENTPAD_PORT` needs to be set in
+  whatever environment your Claude Code hooks actually run in, not just your
+  interactive shell). Additionally, `reporter.py` does
+  `int(env.get("AGENTPAD_PORT", ...))` with no validation: a **non-numeric
+  `AGENTPAD_PORT` raises `ValueError`
   internally, which the reporter's blanket error handling swallows** — the
   hook event is silently dropped and the reporter still exits 0, so a typo
   here fails with no visible error anywhere.
