@@ -27,6 +27,8 @@
 #include "layers.h"
 #include "oskbd.h"
 #include "underglow.h"
+#include "status.h"
+#include "raw_hid.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Claude Code control strings  ⚠️ CONFIRM against your installed Claude Code
@@ -52,12 +54,6 @@
 #define CC_REWIND_SEQ   SS_TAP(X_ESC) SS_TAP(X_ESC)      // Rewind: double-Esc menu
 #define CC_YESALL_SEQ   SS_TAP(X_DOWN) SS_TAP(X_ENT)     // Yes-all: 2nd option ⚠️placeholder
 
-// tmux fleet-key placeholders (SPEC: default tmux C-b p/n/c). Task 2 replaces
-// these with raw_hid_send() events so the daemon drives fleet actions.
-#define TMUX_PREV  'p'   // ◄Agent : previous window
-#define TMUX_NEXT  'n'   // Agent► : next window
-#define TMUX_NEW   'c'   // New    : new window
-
 enum custom_keycodes {
     CC_YESALL = SAFE_RANGE,
     CC_REWIND,
@@ -71,10 +67,10 @@ enum custom_keycodes {
     CC_VERBOSE,
     CC_DIFF,
     CC_RESUME,
-    CC_AGENT_PREV,   // ◄Agent  (tmux placeholder -> Task 2)
-    CC_AGENT_NEXT,   // Agent►   (tmux placeholder -> Task 2)
-    CC_NEW,          // New      (tmux placeholder -> Task 2)
-    CC_JUMP,         // Jump     (no-op today; Task 2 focuses the waiting agent)
+    CC_AGENT_PREV,   // ◄Agent  (raw_hid_send fleet event -> daemon)
+    CC_AGENT_NEXT,   // Agent►   (raw_hid_send fleet event -> daemon)
+    CC_NEW,          // New      (raw_hid_send fleet event -> daemon)
+    CC_JUMP,         // Jump     (raw_hid_send fleet event -> daemon focuses waiting agent)
     CC_OSLAY,        // OS keyboard-layout toggle (_CTL)
 };
 
@@ -99,42 +95,52 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 
 };
 
-// tmux prefix (C-b; 'b' is identity under both OS layouts) then a nav letter.
-// Placeholder for the fleet keys -- Task 2 turns these into raw_hid_send() events.
-static void tmux_key(char nav) {
-    register_code(KC_LCTL);
-    tap_code(KC_B);
-    unregister_code(KC_LCTL);
-    char s[2] = {nav, 0};
-    cc_type(s);  // compensate the nav letter under OS-Colemak
-}
-
 // ── Underglow colour policy (like Tango, the colour follows the active layer) ──
 // Base layer hue also encodes the OS-layout mode, so a glance tells you which mode
 // you're in; _CTL shows its own hue while Fn is held. Brightness is preserved
-// (rgblight_get_val), so UG_VALU/UG_VALD still work. Task 2's daemon overrides all
-// this via set_status_color().
+// (rgblight_get_val), so UG_VALU/UG_VALD still work. Task 2's daemon overrides this
+// via set_status_color(), driven through the status.c seam -- underglow_repaint()
+// is the arbiter: fresh daemon status wins, _CTL always wins over status, and the
+// Task-1 layer/OS-mode colour is the fallback when the daemon is absent/stale.
 #define UG_HUE_QWERTY   170   // base, OS-QWERTY  (default, VM-safe) -- blue
 #define UG_HUE_COLEMAK  213   // base, OS-Colemak (gaming)          -- magenta
 #define UG_HUE_CTL        0   // control layer (hold Fn)            -- red
 
-static void underglow_for_layer(uint8_t layer) {
-    uint8_t hue = (layer == _CTL) ? UG_HUE_CTL
-                : os_layout_is_colemak() ? UG_HUE_COLEMAK : UG_HUE_QWERTY;
-    set_status_color(hue, 255, rgblight_get_val());
+void underglow_repaint(void) {
+    uint8_t layer = get_highest_layer(layer_state);
+    if (layer == _CTL) { set_status_color(UG_HUE_CTL, 255, rgblight_get_val()); return; }
+    if (status_is_active()) { status_render(); return; }
+    set_status_color(os_layout_is_colemak() ? UG_HUE_COLEMAK : UG_HUE_QWERTY, 255, rgblight_get_val());
+}
+
+static void send_fleet(uint8_t key) {
+    uint8_t report[32] = {0};  // 32-byte reports (wire protocol, Global Constraints);
+                               // RAW_EPSIZE lives in tmk_core/protocol/usb_descriptor.h,
+                               // which isn't on keymap.c's include path.
+    report[0] = 0x10;  // CMD_FLEET
+    report[1] = key;
+    raw_hid_send(report, sizeof(report));
 }
 
 // ── QMK hooks -> modules ─────────────────────────────────────────────────────
 void keyboard_post_init_user(void) {
     status_underglow_init();   // static-light mode
     os_layout_init();          // restore persisted OS-layout mode
-    underglow_for_layer(get_highest_layer(layer_state));  // seed base colour
+    status_init();
+    underglow_repaint();       // seed base colour
 }
 
 layer_state_t layer_state_set_user(layer_state_t state) {
-    underglow_for_layer(get_highest_layer(state));
+    // repaint for the NEW layer; can't use underglow_repaint() directly because it
+    // reads layer_state (old) -- recompute inline:
+    uint8_t layer = get_highest_layer(state);
+    if (layer == _CTL) { set_status_color(UG_HUE_CTL, 255, rgblight_get_val()); return state; }
+    if (status_is_active()) { status_render(); return state; }
+    set_status_color(os_layout_is_colemak() ? UG_HUE_COLEMAK : UG_HUE_QWERTY, 255, rgblight_get_val());
     return state;
 }
+
+void housekeeping_task_user(void) { status_tick(); }
 
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     if (!record->event.pressed) return true;  // custom keys all fire on press
@@ -154,11 +160,11 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
         case CC_YESALL:  SEND_STRING(CC_YESALL_SEQ); return false;
         case CC_VERBOSE: cc_ctrl_letter('o');        return false;  // Ctrl-O transcript toggle
 
-        // Fleet keys -- Task-1 tmux placeholders (Task 2 -> raw_hid_send).
-        case CC_AGENT_PREV: tmux_key(TMUX_PREV); return false;
-        case CC_AGENT_NEXT: tmux_key(TMUX_NEXT); return false;
-        case CC_NEW:        tmux_key(TMUX_NEW);  return false;
-        case CC_JUMP:       return false;  // no-op today; Task 2 focuses the waiting agent
+        // Fleet keys -- raw_hid_send events; the daemon drives tmux/Win32 actions.
+        case CC_JUMP:       send_fleet(0); return false;  // Jump
+        case CC_AGENT_PREV: send_fleet(1); return false;
+        case CC_AGENT_NEXT: send_fleet(2); return false;
+        case CC_NEW:        send_fleet(3); return false;
 
         case CC_OSLAY:      os_layout_toggle(); return false;
     }

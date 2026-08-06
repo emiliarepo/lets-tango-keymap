@@ -6,7 +6,7 @@
 TAP_DANCE_ENABLE = no
 
 # Extra translation units beyond keymap.c (mirrors the Tango layout).
-SRC += oskbd.c underglow.c
+SRC += oskbd.c underglow.c status.c
 
-# Task 2 will add:
-#   RAW_ENABLE = yes        # host daemon <-> pad status + fleet-key events over Raw HID
+# Task 2: host daemon <-> pad status + fleet-key events over Raw HID.
+RAW_ENABLE = yes
