@@ -9,6 +9,9 @@
 #define STATUS_STALE_MS 5000
 #define BREATHE_PERIOD_MS 2600
 
+// Every status uses the user's current underglow level (rgblight_get_val), so
+// UG_VALU/UG_VALD govern brightness for all of them. Only `running` varies its
+// brightness -- that's the breathe animation itself.
 enum { ST_NONE=0, ST_IDLE, ST_RUNNING, ST_WAITING, ST_ERROR };
 
 extern void underglow_repaint(void);   // arbiter in keymap.c
@@ -28,20 +31,35 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
 void status_init(void) { s_fresh = false; }
 bool status_is_active(void) { return s_fresh; }
 
+// Continuous breathe triangle 0..255..0, advanced by elapsed time rather than
+// (timer_read() % period). timer_read() is a 16-bit ms counter that wraps every
+// ~65 s and 65536 isn't a multiple of the period, so the old modulo produced a
+// visible discontinuity at each wrap. Unsigned 16-bit subtraction gives the correct
+// elapsed delta across the wrap, so the accumulated phase stays smooth.
+static uint16_t breathe_phase = 0;
+static uint16_t breathe_last  = 0;
+
+static uint8_t breathe_tri(void) {
+    const uint16_t now = timer_read();
+    breathe_phase += (uint16_t)(now - breathe_last);   // wrap-safe elapsed ms
+    breathe_last = now;
+    while (breathe_phase >= BREATHE_PERIOD_MS) breathe_phase -= BREATHE_PERIOD_MS;
+
+    const uint16_t half = BREATHE_PERIOD_MS / 2;
+    const uint16_t d = breathe_phase < half ? breathe_phase : (BREATHE_PERIOD_MS - breathe_phase);
+    return (uint8_t)((uint32_t)d * 255u / half);       // 0..255 up, 255..0 down
+}
+
 void status_render(void) {
+    const uint8_t uval = rgblight_get_val();  // the user's brightness (UG_VALU/VALD)
     switch (s_code) {
         case ST_NONE:    set_status_color(0, 0, 0); break;
-        case ST_IDLE:    set_status_color(170, 180, 40); break;
-        case ST_WAITING: set_status_color(85, 255, 200); break;
-        case ST_ERROR:   set_status_color(0, 255, 200); break;
-        case ST_RUNNING: {
-            uint16_t t = timer_read() % BREATHE_PERIOD_MS;
-            uint8_t phase = (uint8_t)((uint32_t)t * 255u / BREATHE_PERIOD_MS);
-            uint8_t tri = phase < 128 ? (uint8_t)(phase * 2) : (uint8_t)((255 - phase) * 2);
-            uint8_t val = 30 + (uint8_t)((uint16_t)tri * 200u / 255u);
-            set_status_color(28, 255, val);   // amber breathe
+        case ST_IDLE:    set_status_color(170, 180, uval); break;
+        case ST_WAITING: set_status_color(85, 255, uval); break;
+        case ST_ERROR:   set_status_color(0, 255, uval); break;
+        case ST_RUNNING: // amber, breathing across the user's full brightness
+            set_status_color(28, 255, (uint8_t)((uint16_t)uval * breathe_tri() / 255u));
             break;
-        }
         default: s_fresh = false; break;
     }
 }
