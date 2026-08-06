@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "SessionStart":     [{"hooks":[{"type":"command","command":"python ~/.claude/agentpad/reporter.py SessionStart"}]}],
+    "UserPromptSubmit": [{"hooks":[{"type":"command","command":"python ~/.claude/agentpad/reporter.py UserPromptSubmit"}]}],
+    "PreToolUse":       [{"matcher":"*","hooks":[{"type":"command","command":"python ~/.claude/agentpad/reporter.py PreToolUse"}]}],
+    "PostToolUse":      [{"matcher":"*","hooks":[{"type":"command","command":"python ~/.claude/agentpad/reporter.py PostToolUse"}]}],
+    "Notification":     [{"hooks":[{"type":"command","command":"python ~/.claude/agentpad/reporter.py Notification"}]}],
+    "Stop":             [{"hooks":[{"type":"command","command":"python ~/.claude/agentpad/reporter.py Stop"}]}],
+    "SubagentStop":     [{"hooks":[{"type":"command","command":"python ~/.claude/agentpad/reporter.py SubagentStop"}]}],
+    "SessionEnd":       [{"hooks":[{"type":"command","command":"python ~/.claude/agentpad/reporter.py SessionEnd"}]}]
+  }
+}
