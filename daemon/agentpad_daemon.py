@@ -5,7 +5,7 @@ import time
 
 from daemon import actions
 from daemon.aggregator import Aggregator
-from daemon.core import Config, FleetKey, Status
+from daemon.core import STATUS_RANK, Config, FleetKey, Status
 from daemon.hid_link import HidLink
 from daemon.listener import Listener
 
@@ -24,6 +24,8 @@ class Daemon:
         self.listener = Listener(cfg, self.agg, on_event=self._dirty)
         self._last_status: Status | None = None
         self._last_sent_at: float = 0.0
+        self._shown: Status = Status.NONE     # status after linger smoothing
+        self._calm_since: float | None = None  # when a calmer status first appeared
 
     def _dirty(self) -> None:
         """Callback wired to the Listener on every accepted event. tick()
@@ -40,7 +42,7 @@ class Daemon:
             actions.dispatch(key, self.cfg, self.agg.waiting_pane())
 
         now = time.time()
-        status = self.agg.aggregate()
+        status = self._smooth(self.agg.aggregate(), now)
         changed = status != self._last_status
         stale = (now - self._last_sent_at) >= self.cfg.keepalive_s
         if changed or stale:
@@ -49,6 +51,21 @@ class Daemon:
             self._last_sent_at = now
 
         self.agg.expire(now, self.cfg.session_ttl_s)
+
+    def _smooth(self, raw: Status, now: float) -> Status:
+        """Adopt a more-urgent status immediately, but hold it for `linger_s`
+        before dropping to a calmer one -- so a momentary blip (a stray idle
+        between tool calls) doesn't flicker the underglow."""
+        if STATUS_RANK[raw] >= STATUS_RANK[self._shown]:
+            self._shown = raw
+            self._calm_since = None
+        else:
+            if self._calm_since is None:
+                self._calm_since = now
+            if now - self._calm_since >= self.cfg.linger_s:
+                self._shown = raw
+                self._calm_since = None
+        return self._shown
 
 
 def _tick_safe(d: Daemon) -> None:

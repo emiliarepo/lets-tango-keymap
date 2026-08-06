@@ -52,3 +52,18 @@ def test_tick_safe_survives_dispatch_failure(monkeypatch):
     # daemon keeps ticking normally -- status still gets sent.
     agentpad_daemon._tick_safe(d)
     assert d.link.sent and d.link.sent[-1] == Status.WAITING
+
+
+def test_smooth_holds_urgent_status_through_brief_calm():
+    d = Daemon(Config(linger_s=1.5))
+    assert d._smooth(Status.RUNNING, 100.0) == Status.RUNNING   # adopt at once
+    assert d._smooth(Status.IDLE, 100.4) == Status.RUNNING      # brief idle -> held
+    assert d._smooth(Status.RUNNING, 100.8) == Status.RUNNING   # running again -> resets
+    assert d._smooth(Status.IDLE, 101.0) == Status.RUNNING      # idle again -> held
+    assert d._smooth(Status.IDLE, 103.0) == Status.IDLE         # calm > linger -> drop
+
+
+def test_smooth_adopts_more_urgent_immediately():
+    d = Daemon(Config(linger_s=1.5))
+    d._smooth(Status.IDLE, 0.0)
+    assert d._smooth(Status.WAITING, 0.1) == Status.WAITING     # upgrade: no linger

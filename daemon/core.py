@@ -45,6 +45,9 @@ class Config:
     keepalive_s: float = 2.0
     stale_s: float = 5.0
     session_ttl_s: float = 3600.0
+    # Hold a more-urgent status this long before dropping to a calmer one, so a
+    # brief blip (e.g. a stray idle between tool calls) doesn't flicker the pad.
+    linger_s: float = 1.5
     foreground: bool = True
     terminal_exe: str = "WindowsTerminal.exe"
     new_window_argv: list[str] = field(default_factory=lambda: ["new-window", "claude"])
